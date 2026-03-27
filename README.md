@@ -1,5 +1,7 @@
 # Major-and-minor-changes-in-R-and-Bioconductor-since-2017
 
+![img](R-nerd-for-life.png)
+
 # Table of Contents
 * [# R & Bioconductor: What Changed 2014–2017](https://github.com/swajid/Major-and-minor-changes-in-R-and-Bioconductor-since-2017/edit/main/README.md#r--bioconductor-what-changed-20142017)
 * [# R & Bioconductor: What Changed Since 2017](https://github.com/swajid/Major-and-minor-changes-in-R-and-Bioconductor-since-2017/edit/main/README.md#r--bioconductor-what-changed-20142017) 
