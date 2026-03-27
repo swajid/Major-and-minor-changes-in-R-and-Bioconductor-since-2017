@@ -3,6 +3,7 @@
 # Table of Contents
 * [# R & Bioconductor: What Changed 2014–2017](https://github.com/swajid/Major-and-minor-changes-in-R-and-Bioconductor-since-2017/edit/main/README.md#r--bioconductor-what-changed-20142017)
 * [# R & Bioconductor: What Changed Since 2017](https://github.com/swajid/Major-and-minor-changes-in-R-and-Bioconductor-since-2017/edit/main/README.md#r--bioconductor-what-changed-20142017) 
+* [# R UI Development: Changes from 2012 to 2026](https://github.com/swajid/Major-and-minor-changes-in-R-and-Bioconductor-since-2017/edit/main/README.md#r-ui-development-2012-to-2026)
 
 # R & Bioconductor: What Changed 2014–2017
 ### The Foundation Layer — Tidyverse, SummarizedExperiment, Rcpp Attributes
@@ -1048,3 +1049,851 @@ Need Python-like OOP for a data scientist collaborator to understand?
 - *https://extendr.rs — Rust/R ecosystem*
 - *https://r-pkgs.org — R Packages (2e) by Wickham & Bryan*
 - *https://adv-r.hadley.nz — Advanced R (2e) for OOP deep dives*
+
+# R UI Development: 2012 to 2026
+### From Raw `fluidPage()` to bslib Dashboards, Modules, and Serverless WebAssembly
+
+> **Scope:** Shiny 0.x → 1.9+ · Bootstrap 2 → 5 · shinydashboard → bslib · R Markdown → Quarto · shinylive / webR  
+> **Shiny has not been replaced** — it remains the dominant R UI framework, but has been substantially modernised.
+
+---
+
+## Table of Contents
+
+1. [Era 1 (2012–2016): Early Shiny](#1-era-1-20122016-early-shiny)
+2. [Era 2 (2016–2020): Modules, Dashboards, htmlwidgets](#2-era-2-20162020-modules-dashboards-htmlwidgets)
+3. [Era 3 (2020–2023): bslib, Bootstrap 5, Quarto](#3-era-3-20202023-bslib-bootstrap-5-quarto)
+4. [Era 4 (2023–2026): Serverless, ExtendedTask, AI Integration](#4-era-4-20232026-serverless-extendedtask-ai-integration)
+5. [Current Best Practices (2026)](#5-current-best-practices-2026)
+6. [Complete Example: DNA → Amino Acid Translator](#6-complete-example-dna--amino-acid-translator)
+7. [Deployment Quick Reference](#7-deployment-quick-reference)
+
+---
+
+## 1. Era 1 (2012–2016): Early Shiny
+
+Shiny launched in 2012. The programming model — reactive expressions, `ui.R` / `server.R` split, Bootstrap 2 — was revolutionary for statisticians who had never written a web app. But the aesthetics and ergonomics were rough.
+
+### The Original App Structure
+
+```
+myapp/
+├── ui.R       # UI definition
+└── server.R   # server logic
+```
+
+Or the single-file `app.R` format (introduced ~2015):
+
+```r
+# app.R — the single-file format that became standard
+library(shiny)
+
+ui <- fluidPage(
+  titlePanel("My App"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("n", "Sample size", 1, 100, 50)
+    ),
+    mainPanel(
+      plotOutput("plot")
+    )
+  )
+)
+
+server <- function(input, output) {
+  output$plot <- renderPlot({
+    hist(rnorm(input$n))
+  })
+}
+
+shinyApp(ui, server)
+```
+
+### What Was Painful in This Era
+
+- **No theming beyond CSS hacks** — Bootstrap 2, grey sidebars, blue buttons. Customisation meant writing raw CSS.
+- **No modules** — large apps became a single enormous `server` function with colliding input/output IDs.
+- **Reactivity debugging was opaque** — no `reactlog`, errors surfaced poorly.
+- **No async** — any slow computation blocked the entire session.
+- **`shinydashboard` (2015)** was the first real improvement to layout — boxes, value boxes, sidebars with icons — and became immediately ubiquitous. Most bioinformatics Shiny apps built 2015–2020 use it.
+
+```r
+library(shinydashboard)
+
+ui <- dashboardPage(
+  dashboardHeader(title = "Genomics Dashboard"),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("CNV", tabName = "cnv", icon = icon("dna"))
+    )
+  ),
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "cnv",
+        box(plotOutput("cnv_plot"), width = 12)
+      )
+    )
+  )
+)
+```
+
+---
+
+## 2. Era 2 (2016–2020): Modules, Dashboards, htmlwidgets
+
+### Shiny Modules (2016) — The Most Important Design Pattern
+
+Modules solved the namespace collision problem in large apps. A module is a UI function + server function pair with an isolated ID namespace. This is now **mandatory practice** for any non-trivial app.
+
+```r
+# A self-contained module for sequence input
+# --- module definition ---
+sequenceInputUI <- function(id) {
+  ns <- NS(id)   # NS() creates the namespace function
+  tagList(
+    textAreaInput(ns("seq"),  "Enter DNA sequence", rows = 3,
+                  placeholder = "ATGCGA..."),
+    actionButton(ns("submit"), "Translate", class = "btn-primary")
+  )
+}
+
+sequenceInputServer <- function(id) {
+  moduleServer(id, function(input, output, session) {
+    # input$seq refers to "mymod-seq" in the parent app — no collision
+    eventReactive(input$submit, {
+      toupper(trimws(input$seq))
+    })
+  })
+}
+
+# --- use in app ---
+ui <- fluidPage(
+  sequenceInputUI("mymod")   # ID prefix is "mymod"
+)
+
+server <- function(input, output, session) {
+  dna <- sequenceInputServer("mymod")
+}
+```
+
+**The rule:** any UI component you expect to reuse, or any component with >~5 inputs/outputs, should be a module.
+
+### htmlwidgets — JavaScript Visualisation in R
+
+The `htmlwidgets` framework (2014–2015, mature by 2016) allowed R wrappers around any JavaScript visualisation library. The bioinformatics-relevant ones:
+
+| Package | JS library | Use |
+|---------|-----------|-----|
+| `plotly` | Plotly.js | Interactive plots, hover data |
+| `leaflet` | Leaflet.js | Genomic coordinate maps, coverage plots |
+| `DT` | DataTables | Interactive sortable/filterable tables |
+| `visNetwork` | vis.js | Network/pathway graphs |
+| `igvShiny` | IGV.js | In-browser genome browser |
+
+```r
+library(DT)
+library(plotly)
+
+# DT — interactive variant tables
+output$variant_table <- renderDT({
+  datatable(variant_df,
+    filter   = "top",        # per-column filters
+    rownames = FALSE,
+    options  = list(pageLength = 25, scrollX = TRUE)
+  )
+})
+
+# plotly — interactive coverage plot
+output$coverage_plot <- renderPlotly({
+  p <- ggplot(coverage_df, aes(pos, depth, color = allele)) +
+    geom_line()
+  ggplotly(p, tooltip = c("pos", "depth"))
+})
+```
+
+### `reactlog` — Reactive Debugging
+
+`reactlog` arrived in this era, providing a visual graph of reactive dependencies. Still the primary debugging tool for reactivity problems:
+
+```r
+options(shiny.reactlog = TRUE)
+shinyApp(ui, server)
+# Then press Ctrl+F3 to view the reactive graph
+```
+
+---
+
+## 3. Era 3 (2020–2023): bslib, Bootstrap 5, Quarto
+
+### The Core Shift: `bslib` Replaces `shinydashboard`
+
+`bslib` was released to CRAN in 2021 and is now the **recommended way to build all Shiny UIs**. It wraps Bootstrap (currently version 5) and provides a modern layout and theming system. `shinydashboard` is effectively in maintenance mode — new projects should use `bslib`.
+
+**The key mental model change:** instead of `fluidPage()` + `sidebarLayout()`, you now use `page_*()` functions from `bslib`:
+
+| Old function | New bslib equivalent |
+|-------------|---------------------|
+| `fluidPage()` | `page_fluid()` |
+| `navbarPage()` | `page_navbar()` |
+| `sidebarLayout()` | `page_sidebar()` |
+| `dashboardPage()` (shinydashboard) | `page_sidebar()` + `layout_columns()` |
+| `tabsetPanel()` | `navset_card_tab()` |
+
+### Modern Layout with `bslib`
+
+```r
+library(shiny)
+library(bslib)
+
+ui <- page_sidebar(
+  title = "Genomics Explorer",
+  theme = bs_theme(
+    preset    = "shiny",     # modern default look
+    bootswatch = "flatly",  # or any Bootswatch theme
+    base_font = font_google("Inter")
+  ),
+
+  # --- sidebar ---
+  sidebar = sidebar(
+    title  = "Parameters",
+    width  = 280,
+    fileInput("vcf",  "Upload VCF"),
+    selectInput("gene", "Gene", choices = NULL),
+    input_switch("loh_filter", "Show LOH only", value = FALSE),
+    hr(),
+    actionButton("run", "Run Analysis", class = "btn-primary w-100")
+  ),
+
+  # --- main panel: responsive columns ---
+  layout_columns(
+    col_widths = c(8, 4),
+
+    card(
+      full_screen = TRUE,
+      card_header("CNV Profile"),
+      plotOutput("cnv_plot", height = "400px")
+    ),
+
+    card(
+      card_header("Summary Statistics"),
+      value_box(
+        title    = "Tumor Purity",
+        value    = textOutput("purity"),
+        showcase = bsicons::bs_icon("activity"),
+        theme    = "primary"
+      ),
+      value_box(
+        title    = "Ploidy",
+        value    = textOutput("ploidy"),
+        showcase = bsicons::bs_icon("layers"),
+        theme    = "secondary"
+      )
+    )
+  ),
+
+  card(
+    full_screen = TRUE,
+    card_header("Variant Table"),
+    DT::DTOutput("var_table")
+  )
+)
+```
+
+### Theming — Real-Time with `bs_themer()`
+
+```r
+server <- function(input, output, session) {
+  # During development: live theme editor in a sidebar panel
+  bs_themer()
+
+  # ... rest of server
+}
+```
+
+### Quarto — Replacing R Markdown for Documents and Dashboards
+
+Quarto (2022) replaced R Markdown as the standard for reproducible documents. For Shiny specifically, Quarto enables **inline Shiny apps in documents** and the `quarto-dashboard` format:
+
+```yaml
+# _quarto.yml for a Quarto dashboard with Shiny
+format:
+  dashboard:
+    theme: flatly
+server: shiny
+```
+
+```{r}
+#| context: server
+output$plot <- renderPlot({ ... })
+```
+
+For static, no-server reports embedding interactive plots — `plotly` + Quarto HTML is now the standard, replacing `flexdashboard`.
+
+---
+
+## 4. Era 4 (2023–2026): Serverless, ExtendedTask, AI Integration
+
+### `ExtendedTask` — Non-Blocking Async (Shiny 1.8+, 2024)
+
+Before `ExtendedTask`, running a slow computation (e.g. a FACETS run, an alignment call) blocked the entire Shiny session — the UI froze. `promises` + `future` offered async, but were complex to wire up correctly. `ExtendedTask` makes this simple:
+
+```r
+library(shiny)
+library(bslib)
+library(future)
+plan(multisession)   # background R processes
+
+ui <- page_sidebar(
+  sidebar = sidebar(
+    actionButton("run", "Run FACETS"),
+    # input_task_button gives visual feedback + prevents double-click
+    bslib::input_task_button("run_task", "Run (non-blocking)")
+  ),
+  card(verbatimTextOutput("result"))
+)
+
+server <- function(input, output, session) {
+
+  # ExtendedTask: runs in background, UI stays responsive
+  facets_task <- ExtendedTask$new(function(tumor_bam, normal_bam) {
+    future({
+      run_facets_pipeline(tumor_bam, normal_bam)  # slow operation
+    })
+  }) |> bslib::bind_task_button("run_task")
+
+  observeEvent(input$run_task, {
+    facets_task$invoke(tumor_bam = "tumor.bam", normal_bam = "normal.bam")
+  })
+
+  output$result <- renderPrint({
+    facets_task$result()   # reactive; updates when task completes
+  })
+}
+```
+
+### shinylive — Shiny Without a Server
+
+`shinylive` is a new way to run Shiny entirely in the browser, without any need for a hosted server, using WebAssembly via the webR project.
+
+This means a Shiny app can be deployed to **GitHub Pages, Netlify, or any static host** — no Shiny Server or Posit Connect required.
+
+```r
+# Export a local Shiny app as a static site
+shinylive::export("myapp/", "site/")
+
+# Deploy site/ to GitHub Pages → app runs in user's browser
+# No server costs, no session limits
+```
+
+**Constraints to know:**
+- No raw socket access (no `curl` — HTTP via XHR only)
+- Not all packages available; must be pre-compiled WebAssembly binaries
+- For a complex Shinylive app, load times decreased from over a minute to just 15 seconds with recent optimisations — startup is still slower than a traditional server app
+- All data and code are visible to the client — not suitable for PHI or proprietary data
+
+**In Quarto documents:**
+
+````markdown
+```{shinylive-r}
+#| standalone: true
+library(shiny)
+library(bslib)
+
+ui <- page_fluid(
+  textInput("seq", "DNA Sequence"),
+  verbatimTextOutput("aa")
+)
+
+server <- function(input, output, session) {
+  output$aa <- renderText({ translate_dna(input$seq) })
+}
+
+shinyApp(ui, server)
+```
+````
+
+### New UI Inputs (bslib 2023–2025)
+
+| New input | Replaces | Notes |
+|-----------|---------|-------|
+| `input_switch()` | `checkboxInput()` | Toggle switch visual |
+| `input_task_button()` | `actionButton()` | Shows spinner during task, prevents re-click |
+| `tooltip()` | Custom JS | Info icons with hover text |
+| `popover()` | Custom JS | Click-triggered overlay with controls |
+| `accordion()` | Manual `div` folding | Collapsible input groups |
+| `layout_columns()` | `column()` + `fluidRow()` | Responsive CSS grid |
+| `value_box()` | `infoBox()` (shinydashboard) | Modern KPI cards |
+
+### `updateOn = "blur"` for Text Inputs
+
+A small but important UX change: text inputs can now defer reactivity until the user finishes typing, preventing constant re-firing on every keystroke — critical for sequence inputs:
+
+```r
+textAreaInput("seq", "DNA sequence", updateOn = "blur")
+# Reactive update fires only when user clicks away or presses Enter
+```
+
+---
+
+## 5. Current Best Practices (2026)
+
+### App Structure — Modules from the Start
+
+```
+myapp/
+├── app.R              # shinyApp(ui, server) — thin wrapper only
+├── R/
+│   ├── mod_input.R    # sequenceInputUI() + sequenceInputServer()
+│   ├── mod_results.R  # resultsUI() + resultsServer()
+│   └── utils.R        # translate_dna(), validate_sequence(), etc.
+├── www/
+│   └── custom.css     # minimal custom CSS (rarely needed with bslib)
+└── tests/
+    └── testthat/      # shinytest2 for UI testing
+```
+
+### The `app.R` Pattern
+
+```r
+# app.R — should be as thin as possible
+library(shiny)
+library(bslib)
+
+# Source all module and utility files
+box::use(R/mod_input, R/mod_results, R/utils)  # or source() / box
+
+ui <- page_navbar(
+  title = "My Bioinformatics App",
+  theme = bs_theme(preset = "shiny"),
+  nav_panel("Translate", mod_input$ui("translate")),
+  nav_panel("About",     includeMarkdown("README.md"))
+)
+
+server <- function(input, output, session) {
+  mod_input$server("translate")
+}
+
+shinyApp(ui, server)
+```
+
+### Testing with `shinytest2`
+
+`shinytest2` (replaced `shinytest` ~2022) uses a headless Chromium browser to snapshot app state:
+
+```r
+# tests/testthat/test-translation.R
+library(shinytest2)
+
+test_that("DNA translation works end-to-end", {
+  app <- AppDriver$new(app_dir = ".")
+
+  app$set_inputs(seq = "ATGAAATGA")
+  app$click("submit")
+  app$expect_values(output = "aa_output")  # snapshot comparison
+})
+```
+
+### Dependency Management with `renv`
+
+```r
+renv::init()        # initialise lockfile
+renv::snapshot()    # record current package versions
+renv::restore()     # reproduce environment on another machine
+```
+
+---
+
+## 6. Complete Example: DNA → Amino Acid Translator
+
+A full worked example demonstrating all current best practices: `bslib` layout, modules, `updateOn = "blur"`, `tooltip()`, `value_box()`, Bioconductor translation via `Biostrings`.
+
+### File structure
+
+```
+dna_translator/
+├── app.R
+└── R/
+    ├── mod_translator.R
+    └── utils_biology.R
+```
+
+---
+
+### `R/utils_biology.R`
+
+```r
+# Genetic code and translation utilities
+# Uses base R only — no Biostrings dependency for portability.
+# For production: use Biostrings::translate() on a DNAString object.
+
+CODON_TABLE <- c(
+  TTT="F", TTC="F", TTA="L", TTG="L",
+  CTT="L", CTC="L", CTA="L", CTG="L",
+  ATT="I", ATC="I", ATA="I", ATG="M",
+  GTT="V", GTC="V", GTA="V", GTG="V",
+  TCT="S", TCC="S", TCA="S", TCG="S",
+  CCT="P", CCC="P", CCA="P", CCG="P",
+  ACT="T", ACC="T", ACA="T", ACG="T",
+  GCT="A", GCC="A", GCA="A", GCG="A",
+  TAT="Y", TAC="Y", TAA="*", TAG="*",
+  CAT="H", CAC="H", CAA="Q", CAG="Q",
+  AAT="N", AAC="N", AAA="K", AAG="K",
+  GAT="D", GAC="D", GAA="E", GAG="E",
+  TGT="C", TGC="C", TGA="*", TGG="W",
+  CGT="R", CGC="R", CGA="R", CGG="R",
+  AGT="S", AGC="S", AGA="R", AGG="R",
+  GGT="G", GGC="G", GGA="G", GGG="G"
+)
+
+#' Validate a DNA string
+#' @param seq character — raw input from user
+#' @return list(valid = logical, cleaned = character, message = character)
+validate_sequence <- function(seq) {
+  cleaned <- toupper(gsub("[^ATCGatcg]", "", seq))
+
+  if (nchar(cleaned) == 0)
+    return(list(valid = FALSE, cleaned = "", message = "No valid DNA bases found."))
+
+  if (nchar(cleaned) < 3)
+    return(list(valid = FALSE, cleaned = cleaned,
+                message = "Sequence too short — need at least one codon (3 bp)."))
+
+  remainder <- nchar(cleaned) %% 3
+  if (remainder != 0)
+    message <- sprintf("Sequence trimmed: last %d base(s) ignored (not a complete codon).", remainder)
+  else
+    message <- NULL
+
+  list(valid = TRUE, cleaned = cleaned, message = message)
+}
+
+#' Translate a cleaned DNA string to amino acids
+#' @param dna character — uppercase, only ATCG, length divisible by 3
+#' @param stop_at_stop logical — whether to terminate at first stop codon
+#' @return list(aa = character, n_codons = int, n_aa = int, has_stop = logical)
+translate_dna <- function(dna, stop_at_stop = FALSE) {
+  n_codons <- nchar(dna) %/% 3
+  codons   <- substring(dna, seq(1, n_codons * 3 - 2, 3),
+                             seq(3, n_codons * 3,     3))
+  aa_vec   <- CODON_TABLE[codons]
+  aa_vec[is.na(aa_vec)] <- "?"
+
+  has_stop <- any(aa_vec == "*")
+
+  if (stop_at_stop && has_stop)
+    aa_vec <- aa_vec[seq_len(which(aa_vec == "*")[1])]
+
+  aa_string <- paste(aa_vec, collapse = "")
+
+  list(
+    aa       = aa_string,
+    codons   = codons,
+    n_codons = n_codons,
+    n_aa     = sum(aa_vec != "*"),
+    has_stop = has_stop
+  )
+}
+```
+
+---
+
+### `R/mod_translator.R`
+
+```r
+library(shiny)
+library(bslib)
+library(bsicons)
+
+# ── UI ─────────────────────────────────────────────────────────────────────────
+
+translatorUI <- function(id) {
+  ns <- NS(id)
+
+  layout_columns(
+    col_widths = c(5, 7),
+
+    # Left card: inputs
+    card(
+      card_header(
+        "Input Sequence",
+        tooltip(
+          bs_icon("info-circle"),
+          "Paste a raw DNA sequence. Non-ATCG characters are silently removed.
+           Sequence is read 5' → 3' from the first base."
+        )
+      ),
+
+      textAreaInput(
+        ns("seq"),
+        label     = NULL,
+        rows      = 6,
+        width     = "100%",
+        value     = "ATGAAAGCAATTTTTCAGTTCGAGTAA",   # example
+        placeholder = "Paste DNA sequence here...",
+        updateOn  = "blur"   # don't fire on every keystroke
+      ),
+
+      input_switch(ns("stop_early"), "Stop at first stop codon (*)", value = TRUE),
+
+      layout_columns(
+        col_widths = c(6, 6),
+        actionButton(ns("example"), "Load Example",
+                     class = "btn-outline-secondary w-100"),
+        input_task_button(ns("translate"), "Translate →",
+                          class = "btn-primary w-100")
+      ),
+
+      uiOutput(ns("validation_msg"))
+    ),
+
+    # Right card: results
+    card(
+      card_header("Translation Output"),
+      card_body(
+        layout_columns(
+          col_widths = c(4, 4, 4),
+          value_box(
+            title    = "Codons",
+            value    = textOutput(ns("n_codons")),
+            showcase = bs_icon("boxes"),
+            theme    = "primary"
+          ),
+          value_box(
+            title    = "Amino Acids",
+            value    = textOutput(ns("n_aa")),
+            showcase = bs_icon("link-45deg"),
+            theme    = "secondary"
+          ),
+          value_box(
+            title    = "Stop Codon",
+            value    = textOutput(ns("has_stop")),
+            showcase = bs_icon("octagon"),
+            theme    = "warning"
+          )
+        ),
+
+        hr(),
+
+        h6("Amino Acid Sequence (single-letter code)"),
+        verbatimTextOutput(ns("aa_out")),
+
+        hr(),
+
+        h6("Codon Table"),
+        DT::DTOutput(ns("codon_table"), height = "250px")
+      )
+    )
+  )
+}
+
+# ── Server ──────────────────────────────────────────────────────────────────────
+
+translatorServer <- function(id) {
+  moduleServer(id, function(input, output, session) {
+    ns <- session$ns
+
+    # Load example sequence
+    observeEvent(input$example, {
+      updateTextAreaInput(session, "seq",
+        value = "ATGAAAGCAATTTTTCAGTTCGAATTTGCCCGCGATACGCATAA"
+      )
+    })
+
+    # Core reactive: only fires on button click or blur
+    result <- eventReactive(input$translate, {
+      req(nchar(trimws(input$seq)) > 0)
+
+      raw   <- trimws(input$seq)
+      check <- validate_sequence(raw)
+
+      if (!check$valid) return(list(error = check$message))
+
+      tr <- translate_dna(check$cleaned, stop_at_stop = input$stop_early)
+      tr$warning <- check$message   # may be NULL
+      tr$valid   <- TRUE
+      tr
+    }, ignoreNULL = FALSE)
+
+    # Validation message
+    output$validation_msg <- renderUI({
+      r <- result()
+      if (is.null(r)) return(NULL)
+      if (!isTRUE(r$valid))
+        return(div(class = "alert alert-danger mt-2", r$error))
+      if (!is.null(r$warning))
+        return(div(class = "alert alert-warning mt-2", r$warning))
+      NULL
+    })
+
+    # Value boxes
+    output$n_codons <- renderText({
+      r <- result(); req(isTRUE(r$valid)); r$n_codons
+    })
+    output$n_aa <- renderText({
+      r <- result(); req(isTRUE(r$valid)); r$n_aa
+    })
+    output$has_stop <- renderText({
+      r <- result(); req(isTRUE(r$valid))
+      if (r$has_stop) "Yes ✓" else "None"
+    })
+
+    # Amino acid string — wrap at 60 characters for readability
+    output$aa_out <- renderText({
+      r <- result(); req(isTRUE(r$valid))
+      aa <- r$aa
+      paste(
+        substring(aa, seq(1, nchar(aa), 60),
+                      pmin(seq(60, nchar(aa) + 59, 60), nchar(aa))),
+        collapse = "\n"
+      )
+    })
+
+    # Codon table
+    output$codon_table <- DT::renderDT({
+      r <- result(); req(isTRUE(r$valid))
+
+      df <- data.frame(
+        Position = seq_along(r$codons),
+        Codon    = r$codons,
+        AA       = CODON_TABLE[r$codons],
+        Type     = ifelse(CODON_TABLE[r$codons] == "*", "Stop",
+                   ifelse(CODON_TABLE[r$codons] %in% c("M"),  "Start/Met",
+                                                               "Coding")),
+        stringsAsFactors = FALSE
+      )
+
+      DT::datatable(df,
+        rownames  = FALSE,
+        selection = "none",
+        options   = list(
+          pageLength = 10,
+          dom        = "tp",   # table + pagination only
+          scrollX    = TRUE
+        )
+      ) |>
+      DT::formatStyle("Type",
+        backgroundColor = DT::styleEqual(
+          c("Stop", "Start/Met", "Coding"),
+          c("#ffe0e0",  "#e0f0ff",  "white")
+        )
+      )
+    })
+
+  })
+}
+```
+
+---
+
+### `app.R`
+
+```r
+library(shiny)
+library(bslib)
+
+# Source utilities and module
+source("R/utils_biology.R")
+source("R/mod_translator.R")
+
+ui <- page_navbar(
+  title = "DNA → Protein Translator",
+  theme = bs_theme(
+    preset     = "shiny",
+    bootswatch = "flatly",
+    base_font  = font_google("Inter")
+  ),
+
+  nav_panel(
+    title = "Translator",
+    icon  = bsicons::bs_icon("dna"),
+    padding = "1.5rem",
+    translatorUI("tr1")
+  ),
+
+  nav_panel(
+    title = "About",
+    icon  = bsicons::bs_icon("info-circle"),
+    padding = "1.5rem",
+    card(
+      card_body(
+        h4("DNA → Amino Acid Translator"),
+        p("Reads sequence 5' → 3', uses standard genetic code (NCBI table 1)."),
+        p("For production use, replace the codon table logic with:"),
+        tags$pre(
+"library(Biostrings)
+dna <- DNAString('ATGAAATGA')
+aa  <- translate(dna)        # returns AAString"
+        )
+      )
+    )
+  ),
+
+  nav_spacer(),
+  nav_item(
+    tags$a(
+      bsicons::bs_icon("github"), "Source",
+      href   = "https://github.com/yourname/dna-translator",
+      target = "_blank"
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  translatorServer("tr1")
+}
+
+shinyApp(ui, server)
+```
+
+### Install Dependencies
+
+```r
+install.packages(c("shiny", "bslib", "bsicons", "DT"))
+# Optional: for production Biostrings-backed translation
+BiocManager::install("Biostrings")
+```
+
+### Run
+
+```r
+shiny::runApp("dna_translator/")
+```
+
+### Export as Serverless (shinylive)
+
+```r
+library(shinylive)
+shinylive::export("dna_translator/", "site/")
+# → Deploy site/ to GitHub Pages; app runs in user's browser via WebAssembly
+```
+
+---
+
+## 7. Deployment Quick Reference
+
+| Option | When to use | Cost |
+|--------|------------|------|
+| **shinyapps.io** (Posit) | Quick sharing, small apps | Free tier available |
+| **Posit Connect** | Enterprise, auth, scheduling | Licensed |
+| **ShinyProxy** | Docker-based, multi-user, self-hosted | Infrastructure cost only |
+| **shinylive → GitHub Pages** | Public apps, no PHI, no heavy compute | Free |
+| **shinylive → Netlify** | Custom domains, static hosting | Free tier generous |
+| **Docker + nginx** | Full control, any cloud | Infrastructure cost |
+
+### Checklist Before Deploying
+
+```
+□ renv::snapshot() — lockfile committed
+□ All inputs validated (req(), validate(), need())
+□ No hardcoded file paths — use here::here() or app-relative paths
+□ Long operations use ExtendedTask (not blocking renderPlot)
+□ Modules used — no naked server-level input$ IDs at scale
+□ shinytest2 snapshot tests pass
+□ No PHI/credentials in source — use environment variables or config::get()
+```
+
+---
+
+*Companion documents: `R_Bioconductor_Changes_Since_2017.md` · `R_Bioconductor_Changes_2014_2017.md`*  
+*Primary references: https://shiny.posit.co · https://rstudio.github.io/bslib · https://posit-dev.github.io/r-shinylive*
+
